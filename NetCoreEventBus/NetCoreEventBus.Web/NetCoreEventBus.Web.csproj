@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+	<PropertyGroup>
+		<TargetFramework>netcoreapp3.1</TargetFramework>
+		<UserSecretsId>be15067e-f381-4224-af7a-bcf92940ff8a</UserSecretsId>
+		<DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+		<DocumentationFile>bin\Debug\netcoreapp3.1\NetCoreEventBus.Web.xml</DocumentationFile>
+		<OutputPath>bin\Debug\netcoreapp3.1\</OutputPath>
+		<NoWarn>1701;1702;1591;</NoWarn>
+	</PropertyGroup>
+
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.10.9" />
+		<PackageReference Include="Swashbuckle.AspNetCore" Version="5.6.3" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\NetCoreEventBus.Infra.EventBus.RabbitMQ\NetCoreEventBus.Infra.EventBus.RabbitMQ.csproj" />
+		<ProjectReference Include="..\NetCoreEventBus.Infra.EventBus.Subscriptions.InMemory\NetCoreEventBus.Infra.EventBus.Subscriptions.InMemory.csproj" />
+		<ProjectReference Include="..\NetCoreEventBus.Infra.EventBus\NetCoreEventBus.Infra.EventBus.csproj" />
+	</ItemGroup>
+
+</Project>
