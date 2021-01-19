@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using NetCoreEventBus.Infra.EventBus.Bus;
 using NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus;
 using NetCoreEventBus.Infra.EventBus.RabbitMQ.Connection;
@@ -30,15 +31,17 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Extensions
                     DispatchConsumersAsync = true,
                 };
 
-                return new RabbitMQPersistentConnection(connectionFactory, connectionRetryCount);
+                var logger = factory.GetService<ILogger<RabbitMQPersistentConnection>>();
+                return new RabbitMQPersistentConnection(connectionFactory, logger, connectionRetryCount);
             });
 
             services.AddSingleton<IEventBus, RabbitMQEventBus>(factory =>
             {
                 var persistentConnection = factory.GetService<IPersistentConnection>();
                 var subscriptionManager = factory.GetService<IEventBusSubscriptionManager>();
+                var logger = factory.GetService<ILogger<RabbitMQEventBus>>();
 
-                return new RabbitMQEventBus(persistentConnection, subscriptionManager, factory, brokerName, queueName, connectionRetryCount);
+                return new RabbitMQEventBus(persistentConnection, subscriptionManager, factory, logger, brokerName, queueName, connectionRetryCount);
             });
         }
     }

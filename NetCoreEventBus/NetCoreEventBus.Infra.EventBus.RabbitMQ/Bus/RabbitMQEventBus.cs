@@ -1,4 +1,5 @@
-﻿using NetCoreEventBus.Infra.EventBus.Bus;
+﻿using Microsoft.Extensions.Logging;
+using NetCoreEventBus.Infra.EventBus.Bus;
 using NetCoreEventBus.Infra.EventBus.Events;
 using NetCoreEventBus.Infra.EventBus.RabbitMQ.Connection;
 using NetCoreEventBus.Infra.EventBus.Subscriptions;
@@ -16,22 +17,25 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 {
 	/// <summary>
 	/// Event Bus implementation that uses RabbitMQ as the message broker.
-	/// The implementation is based on eShopOnContainers (Microsoft's tutorial about microservices in .NET Core).
+	/// The implementation is based on eShopOnContainers (Microsoft's tutorial about microservices in .NET Core), but it implements some features I have found that are based in different libraries.
 	/// 
 	/// References:
 	/// - https://docs.microsoft.com/en-us/dotnet/architecture/microservices/multi-container-microservice-net-applications/integration-event-based-microservice-communications
 	/// - https://docs.microsoft.com/en-us/dotnet/architecture/microservices/multi-container-microservice-net-applications/rabbitmq-event-bus-development-test-environment
+	/// - https://github.com/ojdev/RabbitMQ.EventBus.AspNetCore
 	/// </summary>
 	public class RabbitMQEventBus : IEventBus
 	{
-		private readonly string _brokerName;
+		private readonly string _exchangeName;
 		private readonly string _queueName;
+		private readonly int _retryCount;
+		private readonly TimeSpan _subscribeRetryTime = TimeSpan.FromSeconds(5);
 
 		private readonly IPersistentConnection _persistentConnection;
 		private readonly IEventBusSubscriptionManager _subscriptionsManager;
 		private readonly IServiceProvider _serviceProvider;
 
-		private readonly int _retryCount;
+		private readonly ILogger<RabbitMQEventBus> _logger;
 
 		private IModel _consumerChannel;
 
@@ -39,6 +43,7 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 			IPersistentConnection persistentConnection,
 			IEventBusSubscriptionManager subscriptionsManager,
 			IServiceProvider serviceProvider,
+			ILogger<RabbitMQEventBus> logger,
 			string brokerName,
 			string queueName,
 			int retryCount = 5)
@@ -46,7 +51,8 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 			_persistentConnection = persistentConnection ?? throw new ArgumentNullException(nameof(persistentConnection));
 			_subscriptionsManager = subscriptionsManager ?? throw new ArgumentNullException(nameof(subscriptionsManager));
 			_serviceProvider = serviceProvider;
-			_brokerName = brokerName ?? throw new ArgumentNullException(nameof(brokerName));
+			_logger = logger;
+			_exchangeName = brokerName ?? throw new ArgumentNullException(nameof(brokerName));
 			_queueName = queueName ?? throw new ArgumentNullException(nameof(queueName));
 			_retryCount = retryCount;
 
@@ -64,15 +70,22 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 			var policy = Policy
 				.Handle<BrokerUnreachableException>()
 				.Or<SocketException>()
-				.WaitAndRetry(_retryCount, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
+				.WaitAndRetry(_retryCount, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), (exception, timeSpan) =>
+				{
+					_logger.LogWarning(exception, "Could not publish event #{EventId} after {Timeout} seconds: {ExceptionMessage}.", @event.Id, $"{timeSpan.TotalSeconds:n1}", exception.Message);
+				});
 
 			var eventName = @event.GetType().Name;
 
+			_logger.LogTrace("Creating RabbitMQ channel to publish event #{EventId} ({EventName})...", @event.Id, eventName);
+
 			using (var channel = _persistentConnection.CreateModel())
 			{
-				channel.ExchangeDeclare(exchange: _brokerName, type: "direct");
+				_logger.LogTrace("Declaring RabbitMQ exchange to publish event #{EventId}...", @event.Id);
 
-				var message = JsonSerializer.Serialize<TEvent>(@event);
+				channel.ExchangeDeclare(exchange: _exchangeName, type: "direct");
+
+				var message = JsonSerializer.Serialize(@event);
 				var body = Encoding.UTF8.GetBytes(message);
 
 				policy.Execute(() =>
@@ -80,12 +93,16 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 					var properties = channel.CreateBasicProperties();
 					properties.DeliveryMode = (byte)DeliveryMode.Persistent;
 
+					_logger.LogTrace("Publishing event to RabbitMQ with ID #{EventId}...", @event.Id);
+
 					channel.BasicPublish(
-						exchange: _brokerName,
+						exchange: _exchangeName,
 						routingKey: eventName,
 						mandatory: true,
 						basicProperties: properties,
 						body: body);
+
+					_logger.LogTrace("Published event with ID #{EventId}.", @event.Id);
 				});
 			}
 		}
@@ -95,17 +112,29 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 			where TEventHandler : IEventHandler<TEvent>
 		{
 			var eventName = _subscriptionsManager.GetEventIdentifier<TEvent>();
+			var eventHandlerName = typeof(TEventHandler).GetGenericTypeDefinition().Name;
+
 			AddQueueBindForEventSubscription(eventName);
+
+			_logger.LogInformation("Subscribing to event {EventName} with {EventHandler}...", eventName, eventHandlerName);
 
 			_subscriptionsManager.AddSubscription<TEvent, TEventHandler>();
 			StartBasicConsume();
+
+			_logger.LogInformation("Subscribed to event {EventName} with {EvenHandler}.", eventName, eventHandlerName);
 		}
 
 		public void Unsubscribe<TEvent, TEventHandler>()
 			where TEvent : Event
 			where TEventHandler : IEventHandler<TEvent>
 		{
+			var eventName = _subscriptionsManager.GetEventIdentifier<TEvent>();
+
+			_logger.LogInformation("Unsubscribing from event {EventName}...", eventName);
+
 			_subscriptionsManager.RemoveSubscription<TEvent, TEventHandler>();
+
+			_logger.LogInformation("Unsubscribed from event {EventName}.", eventName);
 		}
 
 		private void ConfigureMessageBroker()
@@ -121,41 +150,56 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 				_persistentConnection.TryConnect();
 			}
 
+			_logger.LogTrace("Creating RabbitMQ consumer channel...");
+
 			var channel = _persistentConnection.CreateModel();
 
-			channel.ExchangeDeclare(exchange: _brokerName, type: "direct");
-			channel.QueueDeclare(
+			channel.ExchangeDeclare(exchange: _exchangeName, type: "direct");
+			channel.QueueDeclare
+			(
 				queue: _queueName,
 				durable: true,
 				exclusive: false,
 				autoDelete: false,
-				arguments: null);
+				arguments: null
+			);
 
 			channel.CallbackException += (sender, ea) =>
 			{
+				_logger.LogWarning(ea.Exception, "Recreating RabbitMQ consumer channel...");
+
 				_consumerChannel.Dispose();
 				_consumerChannel = CreateConsumerChannel();
 				StartBasicConsume();
 			};
+
+			_logger.LogTrace("Created RabbitMQ consumer channel.");
+
 
 			return channel;
 		}
 
 		private void StartBasicConsume()
 		{
+			_logger.LogTrace("Starting RabbitMQ basic consume...");
+
 			if (_consumerChannel == null)
 			{
+				_logger.LogError("Could not start basic consume because consumer channel is null.");
 				return;
 			}
 
 			var consumer = new AsyncEventingBasicConsumer(_consumerChannel);
-
 			consumer.Received += Consumer_Received;
 
-			_consumerChannel.BasicConsume(
+			_consumerChannel.BasicConsume
+			(
 				queue: _queueName,
 				autoAck: false,
-				consumer: consumer);
+				consumer: consumer
+			);
+
+			_logger.LogTrace("Started RabbitMQ basic consume.");
 		}
 
 		private async Task Consumer_Received(object sender, BasicDeliverEventArgs eventArgs)
@@ -163,13 +207,42 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 			var eventName = eventArgs.RoutingKey;
 			var message = Encoding.UTF8.GetString(eventArgs.Body.Span);
 
-			await ProcessEvent(eventName, message);
+			bool isAcknowledged = false;
+			int currentRequeueAttempt = 0;
 
-			_consumerChannel.BasicAck(eventArgs.DeliveryTag, multiple: false);
+			try
+			{
+				await ProcessEvent(eventName, message);
+
+				_consumerChannel.BasicAck(eventArgs.DeliveryTag, multiple: false);
+				isAcknowledged = true;
+			}
+			catch(Exception ex)
+			{
+				_logger.LogWarning(ex, "Error processing the following message: {Message}.", message);
+			}
+			finally
+			{
+				currentRequeueAttempt++;
+
+				if ((!isAcknowledged) && (currentRequeueAttempt <= _retryCount))
+				{
+					_logger.LogWarning("Adding message to queue again with {Time} seconds delay - attempt #{Attempt}...", $"{_subscribeRetryTime.TotalSeconds:n1}", currentRequeueAttempt);
+
+					await Task.Delay(_subscribeRetryTime);
+					_consumerChannel.BasicNack(eventArgs.DeliveryTag, false, true);
+				}
+				else
+				{
+					_logger.LogError("Could not enqueue message again after {Attempt} attempts.", currentRequeueAttempt);
+				}
+			}
 		}
 
 		private async Task ProcessEvent(string eventName, string message)
 		{
+			_logger.LogTrace("Processing RabbitMQ event: {EventName}...", eventName);
+
 			if (!_subscriptionsManager.HasSubscriptionsForEvent(eventName))
 			{
 				return;
@@ -181,16 +254,19 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 				var handler = _serviceProvider.GetService(subscription.HandlerType);
 				if (handler == null)
 				{
+					_logger.LogWarning("There are no handlers for the following event: {EventName}", eventName);
 					continue;
 				}
 
 				var eventType = _subscriptionsManager.GetEventTypeByName(eventName);
 
-				var	@event = JsonSerializer.Deserialize(message, eventType);
+				var @event = JsonSerializer.Deserialize(message, eventType);
 				var concreteType = typeof(IEventHandler<>).MakeGenericType(eventType);
 				await Task.Yield();
 				await (Task)concreteType.GetMethod(nameof(IEventHandler<Event>.HandleAsync)).Invoke(handler, new object[] { @event });
 			}
+
+			_logger.LogTrace("Processed event {EventName}.", eventName);
 		}
 
 		private void SubscriptionManager_OnEventRemoved(object sender, string eventName)
@@ -202,7 +278,7 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 
 			using (var channel = _persistentConnection.CreateModel())
 			{
-				channel.QueueUnbind(queue: _queueName, exchange: _brokerName, routingKey: eventName);
+				channel.QueueUnbind(queue: _queueName, exchange: _exchangeName, routingKey: eventName);
 
 				if (_subscriptionsManager.IsEmpty)
 				{
@@ -226,7 +302,7 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 
 			using (var channel = _persistentConnection.CreateModel())
 			{
-				channel.QueueBind(queue: _queueName, exchange: _brokerName, routingKey: eventName);
+				channel.QueueBind(queue: _queueName, exchange: _exchangeName, routingKey: eventName);
 			}
 		}
 	}
