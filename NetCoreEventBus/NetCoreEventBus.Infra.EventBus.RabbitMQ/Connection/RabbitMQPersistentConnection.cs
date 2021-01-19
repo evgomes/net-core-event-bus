@@ -24,15 +24,21 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Connection
 
 		private readonly ILogger<RabbitMQPersistentConnection> _logger;
 
-		public RabbitMQPersistentConnection(
+		private bool _connectionFailed = false;
+
+		public RabbitMQPersistentConnection
+		(
 			IConnectionFactory connectionFactory,
 			ILogger<RabbitMQPersistentConnection> logger,
-			int retryCount = 5)
+			int retryCount = 5
+		)
 		{
 			_connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
 			_logger = logger;
 			_retryCount = retryCount;
 		}
+
+		public event EventHandler OnReconnectedAfterConnectionFailure;
 
 		public bool IsConnected
 		{
@@ -57,20 +63,32 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Connection
 						_logger.LogWarning(ex, "RabbitMQ Client could not connect after {TimeOut}s ({ExceptionMessage})", $"{time.TotalSeconds:n1}", ex.Message);
 					});
 
-				policy.Execute(() => { _connection = _connectionFactory.CreateConnection(); });
+				policy.Execute(() =>
+				{
+					_connection = _connectionFactory.CreateConnection();
+				});
 
 				if (!IsConnected)
 				{
 					_logger.LogCritical("ERROR: could not connect to RabbitMQ.");
+					_connectionFailed = true;
 					return false;
 				}
 
-				// Adds event handlers to common situations when using the message broker.
+				// These event handlers hadle situations where the connection is lost by any reason. They try to reconnect the client.
 				_connection.ConnectionShutdown += OnConnectionShutdown;
 				_connection.CallbackException += OnCallbackException;
 				_connection.ConnectionBlocked += OnConnectionBlocked;
 
 				_logger.LogInformation("RabbitMQ Client acquired a persistent connection to '{HostName}' and is subscribed to failure events", _connection.Endpoint.HostName);
+
+				// If the connection has failed previously because of a RabbitMQ shutdown or something similar, we need to guarantee that the exchange and queues exist again.
+				// It's also necessary to rebind all application event handlers. We use this event handler below to do this.
+				if (_connectionFailed)
+				{
+					OnReconnectedAfterConnectionFailure?.Invoke(this, null);
+					_connectionFailed = false;
+				}
 
 				return true;
 			}
@@ -105,21 +123,26 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Connection
 			}
 		}
 
-		private void OnConnectionBlocked(object sender, ConnectionBlockedEventArgs e)
+		private void OnConnectionBlocked(object sender, ConnectionBlockedEventArgs args)
 		{
+			_connectionFailed = true;
+
 			_logger.LogWarning("A RabbitMQ connection is shutdown. Trying to re-connect...");
 			TryConnectWhenNotDisposed();
 		}
 
-		private void OnCallbackException(object sender, CallbackExceptionEventArgs e)
+		private void OnCallbackException(object sender, CallbackExceptionEventArgs args)
 		{
+			_connectionFailed = true;
 
 			_logger.LogWarning("A RabbitMQ connection throw exception. Trying to re-connect...");
 			TryConnectWhenNotDisposed();
 		}
 
-		private void OnConnectionShutdown(object sender, ShutdownEventArgs reason)
+		private void OnConnectionShutdown(object sender, ShutdownEventArgs args)
 		{
+			_connectionFailed = true;
+
 			_logger.LogWarning("A RabbitMQ connection is on shutdown. Trying to re-connect...");
 			TryConnectWhenNotDisposed();
 		}

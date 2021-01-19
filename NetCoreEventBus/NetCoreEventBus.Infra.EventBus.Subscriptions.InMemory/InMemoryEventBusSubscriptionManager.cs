@@ -8,16 +8,8 @@ namespace NetCoreEventBus.Infra.EventBus.Subscriptions.InMemory
 	public class InMemoryEventBusSubscriptionManager : IEventBusSubscriptionManager
 	{
 		#region Fields
-		private readonly Dictionary<string, List<Subscription>> _handlers;
-		private readonly List<Type> _eventTypes;
-		#endregion
-
-		#region Constructor
-		public InMemoryEventBusSubscriptionManager()
-		{
-			_handlers = new Dictionary<string, List<Subscription>>();
-			_eventTypes = new List<Type>();
-		}
+		private readonly Dictionary<string, List<Subscription>> _handlers = new Dictionary<string, List<Subscription>>();
+		private readonly List<Type> _eventTypes = new List<Type>();
 		#endregion
 
 		#region Event Handlers
@@ -29,13 +21,13 @@ namespace NetCoreEventBus.Infra.EventBus.Subscriptions.InMemory
 
 		public Type GetEventTypeByName(string eventName) => _eventTypes.SingleOrDefault(t => t.Name == eventName);
 
-		public IEnumerable<Subscription> GetHandlersForEvent<TEvent>() where TEvent : Event
-		{
-			var key = GetEventIdentifier<TEvent>();
-			return GetHandlersForEvent(key);
-		}
-
 		public IEnumerable<Subscription> GetHandlersForEvent(string eventName) => _handlers[eventName];
+
+		/// <summary>
+		/// Returns the dictionary of subscriptiosn in an immutable way.
+		/// </summary>
+		/// <returns>Dictionary.</returns>
+		public Dictionary<string, List<Subscription>> GetAllSubscriptions() => new Dictionary<string, List<Subscription>>(_handlers);
 		#endregion
 
 		#region Subscriptions management
@@ -45,7 +37,7 @@ namespace NetCoreEventBus.Infra.EventBus.Subscriptions.InMemory
 		{
 			var eventName = GetEventIdentifier<TEvent>();
 
-			DoAddSubscription(typeof(TEventHandler), eventName);
+			DoAddSubscription(typeof(TEvent), typeof(TEventHandler), eventName);
 
 			if (!_eventTypes.Contains(typeof(TEvent)))
 			{
@@ -62,23 +54,21 @@ namespace NetCoreEventBus.Infra.EventBus.Subscriptions.InMemory
 			DoRemoveHandler(eventName, handlerToRemove);
 		}
 
-		public void Clear() => _handlers.Clear();
+		public void Clear()
+		{
+			_handlers.Clear();
+			_eventTypes.Clear();
+		}
 		#endregion
 
 		#region Status
 		public bool IsEmpty => !_handlers.Keys.Any();
 
-		public bool HasSubscriptionsForEvent<TEvent>() where TEvent : Event
-		{
-			var key = GetEventIdentifier<TEvent>();
-			return HasSubscriptionsForEvent(key);
-		}
-
 		public bool HasSubscriptionsForEvent(string eventName) => _handlers.ContainsKey(eventName);
 		#endregion
 
 		#region Private methods
-		private void DoAddSubscription(Type handlerType, string eventName)
+		private void DoAddSubscription(Type eventType, Type handlerType, string eventName)
 		{
 			if (!HasSubscriptionsForEvent(eventName))
 			{
@@ -90,7 +80,7 @@ namespace NetCoreEventBus.Infra.EventBus.Subscriptions.InMemory
 				throw new ArgumentException($"Handler Type {handlerType.Name} already registered for '{eventName}'", nameof(handlerType));
 			}
 
-			_handlers[eventName].Add(new Subscription(handlerType));
+			_handlers[eventName].Add(new Subscription(eventType, handlerType));
 		}
 
 		private void DoRemoveHandler(string eventName, Subscription subscriptionToRemove)

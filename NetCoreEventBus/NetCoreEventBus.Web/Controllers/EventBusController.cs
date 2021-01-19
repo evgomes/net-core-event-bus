@@ -1,7 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using NetCoreEventBus.Infra.EventBus.Bus;
 using NetCoreEventBus.Web.IntegrationEvents.Events;
-using System;
 
 namespace NetCoreEventBus.Web.Controllers
 {

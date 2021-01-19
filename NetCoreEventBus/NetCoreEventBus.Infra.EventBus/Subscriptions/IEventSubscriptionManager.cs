@@ -14,11 +14,16 @@ namespace NetCoreEventBus.Infra.EventBus.Subscriptions
 		event EventHandler<string> OnEventRemoved;
 		#endregion
 
+		#region Status
+		bool IsEmpty { get; }
+		bool HasSubscriptionsForEvent(string eventName);
+		#endregion
+
 		#region Events info
 		string GetEventIdentifier<TEvent>();
 		Type GetEventTypeByName(string eventName);
-		IEnumerable<Subscription> GetHandlersForEvent<TEvent>() where TEvent : Event;
 		IEnumerable<Subscription> GetHandlersForEvent(string eventName);
+		Dictionary<string, List<Subscription>> GetAllSubscriptions();
 		#endregion
 
 		#region Subscription management
@@ -31,12 +36,6 @@ namespace NetCoreEventBus.Infra.EventBus.Subscriptions
 			where TEventHandler : IEventHandler<TEvent>;
 
 		void Clear();
-		#endregion
-
-		#region Status
-		bool IsEmpty { get; }
-		bool HasSubscriptionsForEvent<TEvent>() where TEvent : Event;
-		bool HasSubscriptionsForEvent(string eventName);
 		#endregion
 	}
 }

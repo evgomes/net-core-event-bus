@@ -9,6 +9,7 @@ using RabbitMQ.Client.Events;
 using RabbitMQ.Client.Exceptions;
 using System;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -112,7 +113,7 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 			where TEventHandler : IEventHandler<TEvent>
 		{
 			var eventName = _subscriptionsManager.GetEventIdentifier<TEvent>();
-			var eventHandlerName = typeof(TEventHandler).GetGenericTypeDefinition().Name;
+			var eventHandlerName = typeof(TEventHandler).Name;
 
 			AddQueueBindForEventSubscription(eventName);
 
@@ -141,6 +142,7 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 		{
 			_consumerChannel = CreateConsumerChannel();
 			_subscriptionsManager.OnEventRemoved += SubscriptionManager_OnEventRemoved;
+			_persistentConnection.OnReconnectedAfterConnectionFailure += PersistentConnection_OnReconnectedAfterConnectionFailure;
 		}
 
 		private IModel CreateConsumerChannel()
@@ -167,10 +169,7 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 			channel.CallbackException += (sender, ea) =>
 			{
 				_logger.LogWarning(ea.Exception, "Recreating RabbitMQ consumer channel...");
-
-				_consumerChannel.Dispose();
-				_consumerChannel = CreateConsumerChannel();
-				StartBasicConsume();
+				DoCreateConsumerChannel();
 			};
 
 			_logger.LogTrace("Created RabbitMQ consumer channel.");
@@ -208,7 +207,6 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 			var message = Encoding.UTF8.GetString(eventArgs.Body.Span);
 
 			bool isAcknowledged = false;
-			int currentRequeueAttempt = 0;
 
 			try
 			{
@@ -217,25 +215,33 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 				_consumerChannel.BasicAck(eventArgs.DeliveryTag, multiple: false);
 				isAcknowledged = true;
 			}
-			catch(Exception ex)
+			catch (Exception ex)
 			{
 				_logger.LogWarning(ex, "Error processing the following message: {Message}.", message);
 			}
 			finally
 			{
-				currentRequeueAttempt++;
-
-				if ((!isAcknowledged) && (currentRequeueAttempt <= _retryCount))
+				if (!isAcknowledged)
 				{
-					_logger.LogWarning("Adding message to queue again with {Time} seconds delay - attempt #{Attempt}...", $"{_subscribeRetryTime.TotalSeconds:n1}", currentRequeueAttempt);
+					await TryEnqueueMessageAgainAsync(eventArgs);
+				}
+			}
+		}
 
-					await Task.Delay(_subscribeRetryTime);
-					_consumerChannel.BasicNack(eventArgs.DeliveryTag, false, true);
-				}
-				else
-				{
-					_logger.LogError("Could not enqueue message again after {Attempt} attempts.", currentRequeueAttempt);
-				}
+		private async Task TryEnqueueMessageAgainAsync(BasicDeliverEventArgs eventArgs)
+		{
+			try
+			{
+				_logger.LogWarning("Adding message to queue again with {Time} seconds delay...", $"{_subscribeRetryTime.TotalSeconds:n1}");
+
+				await Task.Delay(_subscribeRetryTime);
+				_consumerChannel.BasicNack(eventArgs.DeliveryTag, false, true);
+
+				_logger.LogTrace("Message added to queue again.");
+			}
+			catch (Exception ex)
+			{
+				_logger.LogError("Could not enqueue message again after: {Error}.", ex.Message);
 			}
 		}
 
@@ -303,6 +309,37 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 			using (var channel = _persistentConnection.CreateModel())
 			{
 				channel.QueueBind(queue: _queueName, exchange: _exchangeName, routingKey: eventName);
+			}
+		}
+
+		private void PersistentConnection_OnReconnectedAfterConnectionFailure(object sender, EventArgs e)
+		{
+			DoCreateConsumerChannel();
+			RecreateSubscriptions();
+		}
+
+		private void DoCreateConsumerChannel()
+		{
+			_consumerChannel.Dispose();
+			_consumerChannel = CreateConsumerChannel();
+			StartBasicConsume();
+		}
+
+		private void RecreateSubscriptions()
+		{
+			var subscriptions = _subscriptionsManager.GetAllSubscriptions();
+			_subscriptionsManager.Clear();
+
+			Type eventBusType = this.GetType();
+			MethodInfo genericSubscribe;
+
+			foreach (var entry in subscriptions)
+			{
+				foreach (var subscription in entry.Value)
+				{
+					genericSubscribe = eventBusType.GetMethod("Subscribe").MakeGenericMethod(subscription.EventType, subscription.HandlerType);
+					genericSubscribe.Invoke(this, null);
+				}
 			}
 		}
 	}
