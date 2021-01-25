@@ -15,7 +15,7 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Connection
 	public class RabbitMQPersistentConnection : IPersistentConnection
 	{
 		private readonly IConnectionFactory _connectionFactory;
-		private readonly int _retryCount;
+		private readonly TimeSpan _timeoutBeforeReconnecting;
 
 		private IConnection _connection;
 		private bool _disposed;
@@ -30,12 +30,12 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Connection
 		(
 			IConnectionFactory connectionFactory,
 			ILogger<RabbitMQPersistentConnection> logger,
-			int retryCount = 5
+			int timeoutBeforeReconnecting = 15
 		)
 		{
 			_connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
 			_logger = logger;
-			_retryCount = retryCount;
+			_timeoutBeforeReconnecting = TimeSpan.FromSeconds(timeoutBeforeReconnecting);
 		}
 
 		public event EventHandler OnReconnectedAfterConnectionFailure;
@@ -54,13 +54,13 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Connection
 
 			lock (_locker)
 			{
-				// Creates a policy to retry connecting to message broker a given number of times, defined on the constructor.
+				// Creates a policy to retry connecting to message broker until it succeds.
 				var policy = Policy
 					.Handle<SocketException>()
 					.Or<BrokerUnreachableException>()
-					.WaitAndRetry(_retryCount, duration => TimeSpan.FromSeconds(Math.Pow(2, duration)), (ex, time) =>
+					.WaitAndRetryForever((duration) => _timeoutBeforeReconnecting, (ex, time) =>
 					{
-						_logger.LogWarning(ex, "RabbitMQ Client could not connect after {TimeOut}s ({ExceptionMessage})", $"{time.TotalSeconds:n1}", ex.Message);
+						_logger.LogWarning(ex, "RabbitMQ Client could not connect after {TimeOut} seconds ({ExceptionMessage}). Waiting to try again...", $"{(int)time.TotalSeconds}", ex.Message);
 					});
 
 				policy.Execute(() =>
@@ -79,6 +79,7 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Connection
 				_connection.ConnectionShutdown += OnConnectionShutdown;
 				_connection.CallbackException += OnCallbackException;
 				_connection.ConnectionBlocked += OnConnectionBlocked;
+				_connection.ConnectionUnblocked += OnConnectionUnblocked;
 
 				_logger.LogInformation("RabbitMQ Client acquired a persistent connection to '{HostName}' and is subscribed to failure events", _connection.Endpoint.HostName);
 
@@ -123,20 +124,12 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Connection
 			}
 		}
 
-		private void OnConnectionBlocked(object sender, ConnectionBlockedEventArgs args)
-		{
-			_connectionFailed = true;
-
-			_logger.LogWarning("A RabbitMQ connection is shutdown. Trying to re-connect...");
-			TryConnectWhenNotDisposed();
-		}
-
 		private void OnCallbackException(object sender, CallbackExceptionEventArgs args)
 		{
 			_connectionFailed = true;
 
 			_logger.LogWarning("A RabbitMQ connection throw exception. Trying to re-connect...");
-			TryConnectWhenNotDisposed();
+			TryConnectIfNotDisposed();
 		}
 
 		private void OnConnectionShutdown(object sender, ShutdownEventArgs args)
@@ -144,10 +137,26 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Connection
 			_connectionFailed = true;
 
 			_logger.LogWarning("A RabbitMQ connection is on shutdown. Trying to re-connect...");
-			TryConnectWhenNotDisposed();
+			TryConnectIfNotDisposed();
 		}
 
-		private void TryConnectWhenNotDisposed()
+		private void OnConnectionBlocked(object sender, ConnectionBlockedEventArgs args)
+		{
+			_connectionFailed = true;
+
+			_logger.LogWarning("A RabbitMQ connection is blocked. Trying to re-connect...");
+			TryConnectIfNotDisposed();
+		}
+
+		private void OnConnectionUnblocked(object sender, EventArgs args)
+		{
+			_connectionFailed = true;
+
+			_logger.LogWarning("A RabbitMQ connection is unblocked. Trying to re-connect...");
+			TryConnectIfNotDisposed();
+		}
+
+		private void TryConnectIfNotDisposed()
 		{
 			if (_disposed)
 			{

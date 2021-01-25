@@ -29,7 +29,7 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 	{
 		private readonly string _exchangeName;
 		private readonly string _queueName;
-		private readonly int _retryCount;
+		private readonly int _publishRetryCount = 5;
 		private readonly TimeSpan _subscribeRetryTime = TimeSpan.FromSeconds(5);
 
 		private readonly IPersistentConnection _persistentConnection;
@@ -46,8 +46,7 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 			IServiceProvider serviceProvider,
 			ILogger<RabbitMQEventBus> logger,
 			string brokerName,
-			string queueName,
-			int retryCount = 5)
+			string queueName)
 		{
 			_persistentConnection = persistentConnection ?? throw new ArgumentNullException(nameof(persistentConnection));
 			_subscriptionsManager = subscriptionsManager ?? throw new ArgumentNullException(nameof(subscriptionsManager));
@@ -55,7 +54,6 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 			_logger = logger;
 			_exchangeName = brokerName ?? throw new ArgumentNullException(nameof(brokerName));
 			_queueName = queueName ?? throw new ArgumentNullException(nameof(queueName));
-			_retryCount = retryCount;
 
 			ConfigureMessageBroker();
 		}
@@ -71,7 +69,7 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 			var policy = Policy
 				.Handle<BrokerUnreachableException>()
 				.Or<SocketException>()
-				.WaitAndRetry(_retryCount, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), (exception, timeSpan) =>
+				.WaitAndRetry(_publishRetryCount, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), (exception, timeSpan) =>
 				{
 					_logger.LogWarning(exception, "Could not publish event #{EventId} after {Timeout} seconds: {ExceptionMessage}.", @event.Id, $"{timeSpan.TotalSeconds:n1}", exception.Message);
 				});

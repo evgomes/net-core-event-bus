@@ -97,7 +97,7 @@ namespace NetCoreEventBus.Web
 				connectionUrl: rabbitMQSection["ConnectionUrl"],
 				brokerName: "netCoreEventBusBroker",
 				queueName: "netCoreEventBusQueue",
-				connectionRetryCount: 1
+				timeoutBeforeReconnecting: 15
 			);
 
 			services.AddTransient<MessageSentEventHandler>();

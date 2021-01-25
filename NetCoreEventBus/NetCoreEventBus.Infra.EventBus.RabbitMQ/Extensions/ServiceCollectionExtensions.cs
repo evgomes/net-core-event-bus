@@ -19,8 +19,8 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Extensions
 		/// <param name="connectionUrl">URL to connect to RabbitMQ.</param>
 		/// <param name="brokerName">Broker name. This represents the exchange name.</param>
 		/// <param name="queueName">Messa queue name, to track on RabbitMQ.</param>
-		/// <param name="connectionRetryCount">Connection retry count, for both connection to RabbitMQ, and for retrying the publish and  consume operations.</param>
-		public static void AddRabbitMQEventBus(this IServiceCollection services, string connectionUrl, string brokerName, string queueName, int connectionRetryCount = 5)
+		/// <param name="timeoutBeforeReconnecting">The amount of time in seconds the application will wait after trying to reconnect to RabbitMQ.</param>
+		public static void AddRabbitMQEventBus(this IServiceCollection services, string connectionUrl, string brokerName, string queueName, int timeoutBeforeReconnecting = 15)
 		{
 			services.AddSingleton<IEventBusSubscriptionManager, InMemoryEventBusSubscriptionManager>();
 			services.AddSingleton<IPersistentConnection, RabbitMQPersistentConnection>(factory =>
@@ -29,11 +29,10 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Extensions
 				{
 					Uri = new Uri(connectionUrl),
 					DispatchConsumersAsync = true,
-					AutomaticRecoveryEnabled = false,
 				};
 
 				var logger = factory.GetService<ILogger<RabbitMQPersistentConnection>>();
-				return new RabbitMQPersistentConnection(connectionFactory, logger, connectionRetryCount);
+				return new RabbitMQPersistentConnection(connectionFactory, logger, timeoutBeforeReconnecting);
 			});
 
 			services.AddSingleton<IEventBus, RabbitMQEventBus>(factory =>
@@ -42,7 +41,7 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Extensions
 				var subscriptionManager = factory.GetService<IEventBusSubscriptionManager>();
 				var logger = factory.GetService<ILogger<RabbitMQEventBus>>();
 
-				return new RabbitMQEventBus(persistentConnection, subscriptionManager, factory, logger, brokerName, queueName, connectionRetryCount);
+				return new RabbitMQEventBus(persistentConnection, subscriptionManager, factory, logger, brokerName, queueName);
 			});
 		}
 	}
