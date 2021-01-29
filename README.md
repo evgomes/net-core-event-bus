@@ -1,6 +1,6 @@
 ## ASP.NET Core Event Bus with RabbitMQ 
 
-Sample event bus implementation that uses RabbitMQ as a message broker for high-performance communication between microservices.
+Sample event bus implementation that uses [RabbitMQ](https://www.rabbitmq.com/) as a message broker for high-performance communication between microservices.
 
 The implementation is designed to work with ASP.NET Core, and it supports the default dependency-injection provider. 
 The sample also handles cases where a connection between the message broker and the application is lost. It automatically reconnects once communication is available again.
@@ -13,7 +13,7 @@ Each microservice publish or listen to events that are dispatched and received t
 
 ## Implementation References
 
-The sample here is based on the eShopOnContainers implementation. This project is a Microsoft sample that shows how to design microservices using .NET Core and related technologies. I also took some examples from the RabbitMQ.EventBus.AspNetCore library to understand how to handle message delivery errors.
+The sample here is based on the [eShopOnContainers](https://github.com/dotnet-architecture/eShopOnContainers) implementation. This project is a Microsoft sample that shows how to design microservices using .NET Core and related technologies. I also took some examples from the [RabbitMQ.EventBus.AspNetCore](https://github.com/ojdev/RabbitMQ.EventBus.AspNetCore) library to understand how to handle message delivery errors.
 
 Check these references to better understand how RabbitMQ communication works under the hood.
 
@@ -87,7 +87,7 @@ private void ConfigureEventBusHandlers(IApplicationBuilder app)
 
 ## How to Test
 
-To test this, I recommend you to run a RabbitMQ instance using Docker. Be sure to install it following the install instructions for your operating system.
+To test this, I recommend you to run a RabbitMQ instance using [Docker](https://www.docker.com/). Be sure to install it following the install instructions for your operating system.
 
 First, run the following command to start a Docker instance for RabbitMQ:
 
