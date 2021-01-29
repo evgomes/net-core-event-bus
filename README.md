@@ -96,7 +96,7 @@ First, run the following command to start a Docker instance for RabbitMQ:
 Then, run the application via Visual Studio or using `dotnet run` on the command line, and navigate to `/swagger`. 
 The API documentation shows the sample route to send messages through the event bus. You can send as many messages as you want and check them being displayed on the console log as follow:
 
-![Publish / Subscribe example](https://raw.githubusercontent.com/evgomes/net-core-event-bus/main/images/publish-subscrive-sample.png?token=ADTMTKNL7IZLU4KIYF3CKR3ACNNW6)
+![Publish / Subscribe example](https://raw.githubusercontent.com/evgomes/net-core-event-bus/main/images/publish-subscrive-sample.png)
 
 ## Useful Features
 
