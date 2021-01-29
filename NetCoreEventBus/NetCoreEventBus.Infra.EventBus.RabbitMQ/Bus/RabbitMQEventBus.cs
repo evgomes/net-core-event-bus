@@ -239,7 +239,7 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 			}
 			catch (Exception ex)
 			{
-				_logger.LogError("Could not enqueue message again after: {Error}.", ex.Message);
+				_logger.LogError("Could not enqueue message again: {Error}.", ex.Message);
 			}
 		}
 
@@ -249,6 +249,7 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 
 			if (!_subscriptionsManager.HasSubscriptionsForEvent(eventName))
 			{
+				_logger.LogTrace("There are no subscriptions for this event.");
 				return;
 			}
 
@@ -265,9 +266,9 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 				var eventType = _subscriptionsManager.GetEventTypeByName(eventName);
 
 				var @event = JsonSerializer.Deserialize(message, eventType);
-				var concreteType = typeof(IEventHandler<>).MakeGenericType(eventType);
+				var eventHandlerType = typeof(IEventHandler<>).MakeGenericType(eventType);
 				await Task.Yield();
-				await (Task)concreteType.GetMethod(nameof(IEventHandler<Event>.HandleAsync)).Invoke(handler, new object[] { @event });
+				await (Task)eventHandlerType.GetMethod(nameof(IEventHandler<Event>.HandleAsync)).Invoke(handler, new object[] { @event });
 			}
 
 			_logger.LogTrace("Processed event {EventName}.", eventName);
@@ -335,7 +336,7 @@ namespace NetCoreEventBus.Infra.EventBus.RabbitMQ.Bus
 			{
 				foreach (var subscription in entry.Value)
 				{
-					genericSubscribe = eventBusType.GetMethod("Subscribe").MakeGenericMethod(subscription.EventType, subscription.HandlerType);
+					genericSubscribe = eventBusType.GetMethod( "Subscribe").MakeGenericMethod(subscription.EventType, subscription.HandlerType);
 					genericSubscribe.Invoke(this, null);
 				}
 			}
